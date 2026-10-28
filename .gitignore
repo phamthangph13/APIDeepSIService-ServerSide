@@ -1,0 +1,17 @@
+# Environment
+.env
+.env.*
+!.env.example
+
+# Build artifacts
+/bin/
+/tmp/
+*.exe
+*.test
+*.out
+coverage.out
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
