@@ -92,6 +92,8 @@ All values are documented in [`.env.example`](.env.example). Important groups:
 
 `JWT_SECRET` and `API_KEY_PEPPER` are required in production and must be at least 32 characters. `API_KEY_PEPPER` should be different from `JWT_SECRET`.
 
+To enable email verification in production, configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`, and `SMTP_TLS_MODE=starttls` (or `tls`) in the deployment's secret environment, then set `REQUIRE_EMAIL_VERIFICATION=true`. The service refuses to start if verification is required without SMTP, or if production SMTP is configured without TLS. Keep `AUTH_EXPOSE_DEBUG_TOKENS=false` in production. SMTP credentials must be supplied by the deployment owner; they are intentionally not stored in this repository.
+
 ## API overview
 
 Base path: `/api/v1`. See [docs/API.md](docs/API.md) for request/response examples.

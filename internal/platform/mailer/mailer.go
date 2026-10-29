@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"mime"
 	"net"
+	"net/mail"
 	"net/smtp"
 	"strings"
 	"time"
@@ -46,15 +47,22 @@ func (m *SMTPMailer) Send(ctx context.Context, message Message) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	from := m.cfg.FromEmail
+	from := strings.TrimSpace(m.cfg.FromEmail)
 	if from == "" {
 		from = m.cfg.Username
+	}
+	fromAddress, err := parseAddress(from)
+	if err != nil {
+		return fmt.Errorf("smtp from address: %w", err)
+	}
+	toAddress, err := parseAddress(message.To)
+	if err != nil {
+		return fmt.Errorf("smtp recipient address: %w", err)
 	}
 	addr := net.JoinHostPort(m.cfg.Host, fmt.Sprintf("%d", m.cfg.Port))
 
 	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	var conn net.Conn
-	var err error
 	if strings.EqualFold(m.cfg.TLSMode, "tls") {
 		conn, err = tls.DialWithDialer(dialer, "tcp", addr, &tls.Config{ServerName: m.cfg.Host, MinVersion: tls.VersionTLS12})
 	} else {
@@ -63,7 +71,16 @@ func (m *SMTPMailer) Send(ctx context.Context, message Message) error {
 	if err != nil {
 		return fmt.Errorf("smtp dial: %w", err)
 	}
+	stopClose := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stopClose()
 	defer conn.Close()
+	deadline := time.Now().Add(15 * time.Second)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
+	if err := conn.SetDeadline(deadline); err != nil {
+		return fmt.Errorf("smtp set deadline: %w", err)
+	}
 
 	client, err := smtp.NewClient(conn, m.cfg.Host)
 	if err != nil {
@@ -72,10 +89,11 @@ func (m *SMTPMailer) Send(ctx context.Context, message Message) error {
 	defer client.Close()
 
 	if strings.EqualFold(m.cfg.TLSMode, "starttls") {
-		if ok, _ := client.Extension("STARTTLS"); ok {
-			if err := client.StartTLS(&tls.Config{ServerName: m.cfg.Host, MinVersion: tls.VersionTLS12}); err != nil {
-				return fmt.Errorf("smtp starttls: %w", err)
-			}
+		if ok, _ := client.Extension("STARTTLS"); !ok {
+			return fmt.Errorf("smtp server does not support STARTTLS")
+		}
+		if err := client.StartTLS(&tls.Config{ServerName: m.cfg.Host, MinVersion: tls.VersionTLS12}); err != nil {
+			return fmt.Errorf("smtp starttls: %w", err)
 		}
 	}
 
@@ -85,10 +103,10 @@ func (m *SMTPMailer) Send(ctx context.Context, message Message) error {
 			return fmt.Errorf("smtp auth: %w", err)
 		}
 	}
-	if err := client.Mail(from); err != nil {
+	if err := client.Mail(fromAddress.Address); err != nil {
 		return fmt.Errorf("smtp mail from: %w", err)
 	}
-	if err := client.Rcpt(message.To); err != nil {
+	if err := client.Rcpt(toAddress.Address); err != nil {
 		return fmt.Errorf("smtp rcpt: %w", err)
 	}
 	writer, err := client.Data()
@@ -106,12 +124,18 @@ func (m *SMTPMailer) Send(ctx context.Context, message Message) error {
 
 func buildMessage(cfg config.SMTPConfig, message Message) []byte {
 	boundary := "deepsi-" + fmt.Sprintf("%d", time.Now().UnixNano())
-	fromName := mime.QEncoding.Encode("utf-8", cfg.FromName)
+	from := strings.TrimSpace(cfg.FromEmail)
+	if from == "" {
+		from = strings.TrimSpace(cfg.Username)
+	}
+	fromAddress, _ := parseAddress(from)
+	toAddress, _ := parseAddress(message.To)
+	fromName := mime.QEncoding.Encode("utf-8", strings.ReplaceAll(strings.ReplaceAll(cfg.FromName, "\r", ""), "\n", ""))
 	subject := mime.QEncoding.Encode("utf-8", message.Subject)
 
 	var b bytes.Buffer
-	fmt.Fprintf(&b, "From: %s <%s>\r\n", fromName, cfg.FromEmail)
-	fmt.Fprintf(&b, "To: <%s>\r\n", message.To)
+	fmt.Fprintf(&b, "From: %s\r\n", (&mail.Address{Name: fromName, Address: fromAddress.Address}).String())
+	fmt.Fprintf(&b, "To: %s\r\n", (&mail.Address{Address: toAddress.Address}).String())
 	fmt.Fprintf(&b, "Subject: %s\r\n", subject)
 	fmt.Fprintf(&b, "MIME-Version: 1.0\r\n")
 	fmt.Fprintf(&b, "Date: %s\r\n", time.Now().Format(time.RFC1123Z))
@@ -124,6 +148,17 @@ func buildMessage(cfg config.SMTPConfig, message Message) []byte {
 	b.WriteString(wrapBase64(message.HTML))
 	fmt.Fprintf(&b, "\r\n--%s--\r\n", boundary)
 	return b.Bytes()
+}
+
+func parseAddress(value string) (*mail.Address, error) {
+	if strings.ContainsAny(value, "\r\n") {
+		return nil, fmt.Errorf("invalid address")
+	}
+	address, err := mail.ParseAddress(strings.TrimSpace(value))
+	if err != nil || address.Address == "" {
+		return nil, fmt.Errorf("invalid address")
+	}
+	return address, nil
 }
 
 func wrapBase64(value string) string {

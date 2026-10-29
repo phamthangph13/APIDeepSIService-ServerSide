@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"log/slog"
+	"net/mail"
 	"os"
 	"strconv"
 	"strings"
@@ -270,6 +271,9 @@ func Load() (*Config, error) {
 	if cfg.Auth.BcryptCost < 10 || cfg.Auth.BcryptCost > 15 {
 		return nil, fmt.Errorf("BCRYPT_COST must be between 10 and 15")
 	}
+	if err := cfg.validateSMTP(); err != nil {
+		return nil, err
+	}
 	if cfg.SePay.WebhookAuthMode != "api_key" && cfg.SePay.WebhookAuthMode != "hmac" && cfg.SePay.WebhookAuthMode != "none" {
 		return nil, fmt.Errorf("SEPAY_WEBHOOK_AUTH_MODE must be api_key, hmac or none")
 	}
@@ -368,3 +372,40 @@ func parseLogLevel(value string) slog.Level {
 }
 
 func (c *Config) IsProduction() bool { return c.App.Env == "production" }
+
+func (c *Config) validateSMTP() error {
+	smtp := c.SMTP
+	if strings.TrimSpace(smtp.Host) == "" {
+		if c.IsProduction() && c.Auth.RequireEmailVerification {
+			return fmt.Errorf("SMTP_HOST is required when REQUIRE_EMAIL_VERIFICATION is enabled in production")
+		}
+		return nil
+	}
+	if smtp.Port < 1 || smtp.Port > 65535 {
+		return fmt.Errorf("SMTP_PORT must be between 1 and 65535")
+	}
+	if smtp.TLSMode != "starttls" && smtp.TLSMode != "tls" && smtp.TLSMode != "none" {
+		return fmt.Errorf("SMTP_TLS_MODE must be starttls, tls or none")
+	}
+	if (smtp.Username == "") != (smtp.Password == "") {
+		return fmt.Errorf("SMTP_USERNAME and SMTP_PASSWORD must be configured together")
+	}
+	if c.IsProduction() && smtp.TLSMode == "none" {
+		return fmt.Errorf("SMTP_TLS_MODE=none is not allowed in production")
+	}
+	if smtp.Username != "" && smtp.TLSMode == "none" {
+		return fmt.Errorf("SMTP authentication requires TLS; use SMTP_TLS_MODE=starttls or tls")
+	}
+	from := strings.TrimSpace(smtp.FromEmail)
+	if from == "" {
+		from = strings.TrimSpace(smtp.Username)
+	}
+	if from == "" {
+		return fmt.Errorf("SMTP_FROM_EMAIL is required when SMTP_HOST is configured")
+	}
+	address, err := mail.ParseAddress(from)
+	if err != nil || address.Address == "" || strings.ContainsAny(address.Address, "\r\n") {
+		return fmt.Errorf("SMTP_FROM_EMAIL must be a valid email address")
+	}
+	return nil
+}

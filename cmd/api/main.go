@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	_ "time/tzdata"
 
 	"github.com/deepsi/agent-service/internal/app"
 	"github.com/deepsi/agent-service/internal/config"
