@@ -271,6 +271,9 @@ func Load() (*Config, error) {
 	if cfg.Auth.BcryptCost < 10 || cfg.Auth.BcryptCost > 15 {
 		return nil, fmt.Errorf("BCRYPT_COST must be between 10 and 15")
 	}
+	if err := cfg.validateLLMGateway(); err != nil {
+		return nil, err
+	}
 	if err := cfg.validateSMTP(); err != nil {
 		return nil, err
 	}
@@ -372,6 +375,22 @@ func parseLogLevel(value string) slog.Level {
 }
 
 func (c *Config) IsProduction() bool { return c.App.Env == "production" }
+
+func (c *Config) validateLLMGateway() error {
+	if !c.IsProduction() {
+		return nil
+	}
+	if !c.LLM.Enabled {
+		return fmt.Errorf("LLM_ENABLED must be true in production; route client requests through LLM-APIGATEWAY")
+	}
+	if c.LLM.BaseURL == "" {
+		return fmt.Errorf("LLM_BASE_URL must point to the internal LLM-APIGATEWAY in production")
+	}
+	if c.LLM.APIKey == "" {
+		return fmt.Errorf("LLM_API_KEY must match LLM_GATEWAY_API_KEY in production")
+	}
+	return nil
+}
 
 func (c *Config) validateSMTP() error {
 	smtp := c.SMTP

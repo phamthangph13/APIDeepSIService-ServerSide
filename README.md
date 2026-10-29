@@ -92,6 +92,10 @@ All values are documented in [`.env.example`](.env.example). Important groups:
 
 `JWT_SECRET` and `API_KEY_PEPPER` are required in production and must be at least 32 characters. `API_KEY_PEPPER` should be different from `JWT_SECRET`.
 
+### LLM-APIGATEWAY routing
+
+Client applications call this service's documented `/v1` endpoints. This backend validates the DeepSI API key, scopes, and account quota, then forwards the request to the internal LLM-APIGATEWAY. Keep provider credentials and model-to-upstream mappings in the gateway only. When both services share a host, set `LLM_BASE_URL=http://127.0.0.1:8085/v1`; set this service's `LLM_API_KEY` to the same secret as the gateway's `LLM_GATEWAY_API_KEY`. The gateway must be reachable from the backend host. Production startup requires this route to be enabled and configured.
+
 To enable email verification in production, configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`, and `SMTP_TLS_MODE=starttls` (or `tls`) in the deployment's secret environment, then set `REQUIRE_EMAIL_VERIFICATION=true`. The service refuses to start if verification is required without SMTP, or if production SMTP is configured without TLS. Keep `AUTH_EXPOSE_DEBUG_TOKENS=false` in production. SMTP credentials must be supplied by the deployment owner; they are intentionally not stored in this repository.
 
 ## API overview
@@ -124,7 +128,7 @@ Responses use a `{ "data": ... }` envelope, except the SePay webhook and the Ope
 
 ## LLM proxy
 
-Point `LLM_BASE_URL` at an OpenAI-compatible upstream. If it ends in `/v1`, the proxy strips the local `/v1` prefix before joining; if not, it adds `/v1`.
+The proxy sends requests only to the configured internal LLM-APIGATEWAY. Keep `LLM_BASE_URL` ending in `/v1`; the backend forwards the DeepSI API key's request to the gateway with the gateway's own bearer key. If it ends in `/v1`, the proxy strips the local `/v1` prefix before joining; if not, it adds `/v1`.
 
 ```bash
 curl http://localhost:8080/v1/chat/completions \
@@ -147,7 +151,7 @@ cp .env.example .env
 docker compose up --build -d
 ```
 
-Set `APP_ENV=production`, `FRONTEND_URL`, `PUBLIC_API_URL`, `CORS_ALLOWED_ORIGINS`, `COOKIE_SECURE=true`, and real provider credentials. Put the API behind TLS (Caddy, Nginx, or a cloud load balancer). Use a managed MongoDB with authentication and backups.
+Set `APP_ENV=production`, `FRONTEND_URL`, `PUBLIC_API_URL`, `CORS_ALLOWED_ORIGINS`, `COOKIE_SECURE=true`, and the internal `LLM-APIGATEWAY` URL/key. Provider credentials belong only in the gateway environment. Put the API behind TLS (Caddy, Nginx, or a cloud load balancer). Use a managed MongoDB with authentication and backups.
 
 ## Security notes
 
